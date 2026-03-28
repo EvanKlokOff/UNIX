@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -O2
-TARGET = myprogram
-SOURCES = myprogram.c
+TARGET = sparse_data
+SOURCES = program.c
 
 all: $(TARGET)
 

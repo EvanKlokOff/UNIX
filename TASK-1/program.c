@@ -10,9 +10,8 @@
 
 #define DEFAULT_BLOCK_SIZE 4096
 
-void print_error_and_exit(const char *msg) {
+void print_error(const char *msg) {
     perror(msg);
-    exit(EXIT_FAILURE);
 }
 
 void print_usage(const char *prog_name) {
@@ -22,107 +21,100 @@ void print_usage(const char *prog_name) {
     fprintf(stderr, "\nOptions:\n");
     fprintf(stderr, "  -b, --block-size SIZE  Set block size in bytes (default: 4096)\n");
     fprintf(stderr, "  -h, --help            Show this help message\n");
-    fprintf(stderr, "\nExamples:\n");
-    fprintf(stderr, "  %s fileB                    # read from stdin, write to fileB\n", prog_name);
-    fprintf(stderr, "  %s fileA fileB              # copy fileA to fileB with sparse support\n", prog_name);
-    fprintf(stderr, "  %s -b 100 fileA fileB       # use block size 100 bytes\n", prog_name);
 }
 
-void copy_with_sparse(int src_fd, int dst_fd, size_t block_size) {
-    char *buffer = malloc(block_size);
-    if (!buffer) {
-        print_error_and_exit("malloc failed");
-    }
-
+int copy_with_sparse(int source_file_descriptor, int destination_file_descriptor, size_t block_size, char *buffer, char *zero_buffer) {
     ssize_t bytes_read;
     off_t zero_run_length = 0;
     off_t current_pos = 0;
 
-    while ((bytes_read = read(src_fd, buffer, block_size)) > 0) {
+    
+    while ((bytes_read = read(source_file_descriptor, buffer, block_size)) > 0) {
+        
+        int is_zero_block;
+
         // Проверяем, состоит ли блок полностью из нулей
-        int is_zero_block = 1;
-        for (ssize_t i = 0; i < bytes_read; i++) {
-            if (buffer[i] != 0) {
-                is_zero_block = 0;
-                break;
+        // Для маленьких блоков используем простой цикл (меньше накладных расходов)
+        if (bytes_read <= 64) {
+            is_zero_block = 1;
+            for (ssize_t i = 0; i < bytes_read; i++) {
+                if (buffer[i] != 0) {
+                    is_zero_block = 0;
+                    break;
+                }
             }
+        } else {
+            // Для больших блоков используем memcmp (оптимизирован библиотекой)
+            is_zero_block = (memcmp(buffer, zero_buffer, bytes_read) == 0);
         }
 
-        if (is_zero_block && bytes_read == (ssize_t)block_size) {
-            // Полностью нулевой блок — пропускаем запись
+        if (is_zero_block) {
             zero_run_length += bytes_read;
         } else {
             // Записываем предыдущий нулевой прогон, если он был
             if (zero_run_length > 0) {
-                if (lseek(dst_fd, zero_run_length, SEEK_CUR) == (off_t)-1) {
-                    print_error_and_exit("lseek failed");
+                if (lseek(destination_file_descriptor, zero_run_length, SEEK_CUR) == (off_t)-1) {
+                    print_error("lseek failed");
+                    return -1;
                 }
                 zero_run_length = 0;
             }
 
             // Записываем текущий блок (может быть частичным в конце)
-            if (write(dst_fd, buffer, bytes_read) != bytes_read) {
-                print_error_and_exit("write failed");
+            if (write(destination_file_descriptor, buffer, bytes_read) != bytes_read) {
+                print_error("write failed");
+                return -1;
             }
         }
         current_pos += bytes_read;
     }
 
     if (bytes_read == -1) {
-        print_error_and_exit("read failed");
+        print_error("read failed");
+        return -1;
     }
 
-    // Обработка нулевого прогона в конце файла
-    if (zero_run_length > 0) {
-        if (lseek(dst_fd, zero_run_length, SEEK_CUR) == (off_t)-1) {
-            print_error_and_exit("lseek failed");
-        }
+    // исправляет размер файла, если последние блоки были нулевыми и мы их пропустили
+    if (ftruncate(destination_file_descriptor, current_pos) == -1) {
+        print_error("ftruncate failed");
+        return -1;
     }
 
-    free(buffer);
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
-    int src_fd, dst_fd;
+    int source_file_descriptor = -1;
+    int destination_file_descriptor = -1;
     size_t block_size = DEFAULT_BLOCK_SIZE;
     int opt;
-    int option_index = 0;
+    int exit_status = EXIT_SUCCESS;
     
-    // Опции для getopt_long
     static struct option long_options[] = {
         {"block-size", required_argument, 0, 'b'},
         {"help",       no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
     
-    // Разбор аргументов с помощью getopt_long
-    while ((opt = getopt_long(argc, argv, "b:h", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "b:h", long_options, NULL)) != -1) {
         switch (opt) {
             case 'b':
-                block_size = atoi(optarg);
-                if (block_size == 0) {
+                block_size = strtoul(optarg, NULL, 10);
+                // Размер блока должен быть > 0 и не превышать 1 ГБ
+                // (Ограничение на 1гб сделал искусственно, чтобы программа не зависала и не убивалась ом киллером)
+                if (optarg[0] == '-' || block_size == 0 || block_size > 1024 * 1024 * 1024) {
                     fprintf(stderr, "Error: invalid block size '%s'\n", optarg);
-                    print_usage(argv[0]);
-                    exit(EXIT_FAILURE);
+                    return EXIT_FAILURE;
                 }
                 break;
-                
             case 'h':
                 print_usage(argv[0]);
-                exit(EXIT_SUCCESS);
-                
-            case '?':
-                // getopt_long уже вывел сообщение об ошибке
-                print_usage(argv[0]);
-                exit(EXIT_FAILURE);
-                
+                return EXIT_SUCCESS;
             default:
-                print_usage(argv[0]);
-                exit(EXIT_FAILURE);
+                return EXIT_FAILURE;
         }
     }
     
-    // Проверка количества позиционных аргументов
     int remaining_args = argc - optind;
     const char *src_name = NULL;
     const char *dst_name = NULL;
@@ -138,42 +130,63 @@ int main(int argc, char *argv[]) {
     } else {
         fprintf(stderr, "Error: invalid number of arguments\n");
         print_usage(argv[0]);
-        exit(EXIT_FAILURE);
+        return EXIT_FAILURE;
     }
     
-    // Проверка, что имена файлов не пустые
     if (dst_name == NULL || strlen(dst_name) == 0) {
         fprintf(stderr, "Error: output file name is required\n");
-        print_usage(argv[0]);
-        exit(EXIT_FAILURE);
+        return EXIT_FAILURE;
     }
     
-    // Открытие исходного файла
+    char *buffer = malloc(block_size);
+    // Для оптимизированной проверки нулевых блоков используем статический нулевой буфер
+    char *zero_buffer = calloc(1, block_size);
+
+    if (!buffer || !zero_buffer) {
+        fprintf(stderr, "Error: memory allocation failed\n");
+        free(buffer);
+        free(zero_buffer);
+        return EXIT_FAILURE;
+    }
+
     if (src_name == NULL) {
-        src_fd = STDIN_FILENO;
+        source_file_descriptor = STDIN_FILENO;
     } else {
-        src_fd = open(src_name, O_RDONLY);
-        if (src_fd == -1) {
-            print_error_and_exit("open source file failed");
+        source_file_descriptor = open(src_name, O_RDONLY);
+        if (source_file_descriptor == -1) {
+            print_error("open source file failed");
+            exit_status = EXIT_FAILURE;
+            goto cleanup;
         }
     }
     
-    // Открытие выходного файла
-    dst_fd = open(dst_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (dst_fd == -1) {
-        print_error_and_exit("open destination file failed");
+    destination_file_descriptor = open(dst_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (destination_file_descriptor == -1) {
+        print_error("open destination file failed");
+        exit_status=EXIT_FAILURE;
+        goto cleanup;
     }
     
-    // Копирование с созданием разреженного файла
-    copy_with_sparse(src_fd, dst_fd, block_size);
-    
-    // Закрытие файлов
-    if (src_name != NULL && close(src_fd) == -1) {
-        print_error_and_exit("close source failed");
-    }
-    if (close(dst_fd) == -1) {
-        print_error_and_exit("close destination failed");
+    if (copy_with_sparse(source_file_descriptor, destination_file_descriptor, block_size, buffer, zero_buffer) != 0){
+        fprintf(stderr, "An error occured during copying");
+        exit_status = EXIT_FAILURE; 
     }
     
-    return 0;
+cleanup:
+    // освобождение памяти буфферов и закрытие файлов
+    free(buffer);
+    free(zero_buffer);
+
+    if (src_name != NULL && source_file_descriptor!=-1) {
+        if (close(source_file_descriptor) == -1){
+            print_error("close source failed");
+        }
+    }
+    if (destination_file_descriptor != -1) {
+        if (close(destination_file_descriptor) == -1){
+            print_error("close destination failed");
+        }
+    }
+    
+    return exit_status;
 }
