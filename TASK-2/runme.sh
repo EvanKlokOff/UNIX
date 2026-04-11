@@ -7,7 +7,7 @@ LOCK_FILE="shared_file.lck"
 TARGET_FILE="shared_file"
 
 # Параметры теста
-DURATION=30  # 5 минут
+DURATION=300  # 5 минут
 NUM_PROCESSES=10
 
 
@@ -134,11 +134,8 @@ save_report() {
         echo "Количество процессов: $NUM_PROCESSES"
         echo ""
         cat final_stats.txt
-        echo ""
-        echo "ПРОВЕРКИ"
         if [ -f final_stats.txt ] && [ $(wc -l < final_stats.txt) -eq $((NUM_PROCESSES + 2)) ]; then
             echo "Все $NUM_PROCESSES процессов завершились корректно"
-            echo "Статистика собрана"
         else
             echo "Обнаружены проблемы при выполнении"
         fi
