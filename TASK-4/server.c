@@ -195,7 +195,9 @@ void process_client_data(int idx) {
                 }
             } else {
                 log_message("Invalid number from client %d: %s\n", client->fd, temp_buffer);
-                write(client->fd, "ERROR\n", 6);
+                if (write(client->fd, "ERROR\n", 6) < 0) {
+                    log_message("Error sending ERROR response to client %d\n", client->fd);
+                }
             }
         }
         

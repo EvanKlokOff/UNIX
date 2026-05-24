@@ -9,7 +9,6 @@ NUM_CLIENTS=100
 NUM_NUMBERS=1000
 MAX_DELAY_MS=255
 DELAY_STEPS="0 200 400 600 800 1000"
-CLIENT_COUNTS="1 5 10 20"
 
 # Colors for output
 RED='\033[0;31m'
@@ -98,21 +97,6 @@ stop_server() {
 # Функция для проверки состояния сервера
 check_server_state() {
     local response=$(timeout 5 ./client <<< "0" 2>/dev/null | grep "Response:" | tail -1 | awk '{print $2}')
-    if [ -z "$response" ]; then
-        # Альтернативный метод - напрямую через сокет
-        response=$(timeout 5 python3 -c "
-import socket, os
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.connect('/tmp/brownian_bot_socket')
-s.send(b'0\n')
-try:
-    data = s.recv(1024).decode().strip()
-    print(data)
-except:
-    print('ERROR')
-s.close()
-" 2>/dev/null)
-    fi
     echo "${response:-ERROR}"
 }
 
@@ -223,11 +207,11 @@ run_performance_experiments() {
     echo "" >> $RESULT_FILE
     
     local test_id=100
-    for num_clients in 1 5 10; do
-        for delay_ms in 0 200 400; do
-            stop_server
+    for num_clients in 1 5 10 50 100; do
+        for delay_ms in 0 200 400 600 800 1000; do
+            # stop_server
             > $SERVER_LOG
-            start_server
+            # start_server
             
             run_test $num_clients $delay_ms $test_id
             test_id=$((test_id + 1))
@@ -247,13 +231,12 @@ main() {
     setup_config
     create_test_data
     
+    start_server
     
     # Test 1: Basic functionality
     print_status "=== Test 1: Basic Functionality ==="
     echo "=== Test 1: Basic Functionality Verification ===" >> $RESULT_FILE
     echo "" >> $RESULT_FILE
-    
-    start_server
     
     print_status "Running verification test with single client..."
     local single_test_log="$CLIENT_LOGS_DIR/verification_test.log"
@@ -293,11 +276,11 @@ main() {
     echo "" >> $RESULT_FILE
     
     # Test 2: Multiple clients
-    print_status "=== Test 2: Multiple Clients Verification ==="
-    echo "=== Test 2: Multiple Clients Verification ===" >> $RESULT_FILE
+    print_status "=== Test 2: 100 parallel clients ==="
+    echo "=== Test 2: 100 parallel clients ===" >> $RESULT_FILE
     echo "" >> $RESULT_FILE
     
-    run_test 10 0 "test2_small"
+    run_test 100 200 "test2_small"
     check_resources
     
     # Test 3: Performance experiments

@@ -115,7 +115,9 @@ void test_mode(int sock_fd, const char *filename, const char *logfile, int max_d
     }
     
     // Проверка финального состояния (отправка 0)
-    write(sock_fd, "0\n", 2);
+    if (write(sock_fd, "0\n", 2) < 0) {
+        perror("Failed to send final 0");
+    }
     char final_response[64];
     if (read_line(sock_fd, final_response, sizeof(final_response)) < 0) {
         strcpy(final_response, "ERROR");
@@ -159,8 +161,7 @@ int main(int argc, char *argv[]) {
     
     int sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un addr = {.sun_family = AF_UNIX};
-    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path)-1);
-    addr.sun_path[sizeof(addr.sun_path)-1] = '\0';
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", socket_path);
     
     if (connect(sock_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("connect failed");
